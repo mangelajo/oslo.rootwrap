@@ -13,15 +13,16 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import logging
-import logging.handlers
+#import logging
+#import logging.handlers
 import os
 import string
 
-from six import moves
+#from six import moves
+import ConfigParser
 
-from oslo.rootwrap import filters
-
+#from oslo.rootwrap import filters
+import filters
 
 class NoFilterMatched(Exception):
     """This exception is raised when no filter matched."""
@@ -30,7 +31,7 @@ class NoFilterMatched(Exception):
 
 class FilterMatchNotExecutable(Exception):
     """Raised when a filter matched but no executable was found."""
-    def __init__(self, match=None, **kwargs):
+    def __init__(self, match=None):
         self.match = match
 
 
@@ -52,26 +53,30 @@ class RootwrapConfig(object):
         # syslog_log_facility
         if config.has_option("DEFAULT", "syslog_log_facility"):
             v = config.get("DEFAULT", "syslog_log_facility")
-            facility_names = logging.handlers.SysLogHandler.facility_names
-            self.syslog_log_facility = getattr(logging.handlers.SysLogHandler,
-                                               v, None)
-            if self.syslog_log_facility is None and v in facility_names:
-                self.syslog_log_facility = facility_names.get(v)
-            if self.syslog_log_facility is None:
-                raise ValueError('Unexpected syslog_log_facility: %s' % v)
+	    self.syslog_log_facility = "none"
+            #facility_names = logging.handlers.SysLogHandler.facility_names
+            #self.syslog_log_facility = getattr(logging.handlers.SysLogHandler,
+            #                                   v, None)
+            #if self.syslog_log_facility is None and v in facility_names:
+            #    self.syslog_log_facility = facility_names.get(v)
+            #if self.syslog_log_facility is None:
+            #    raise ValueError('Unexpected syslog_log_facility: %s' % v)
         else:
-            default_facility = logging.handlers.SysLogHandler.LOG_SYSLOG
-            self.syslog_log_facility = default_facility
+            #default_facility = logging.handlers.SysLogHandler.LOG_SYSLOG
+            #self.syslog_log_facility = default_facility
+	    pass
 
         # syslog_log_level
         if config.has_option("DEFAULT", "syslog_log_level"):
             v = config.get("DEFAULT", "syslog_log_level")
-            self.syslog_log_level = logging.getLevelName(v.upper())
-            if (self.syslog_log_level == "Level %s" % v.upper()):
-                raise ValueError('Unexpected syslog_log_level: %s' % v)
+            #self.syslog_log_level = logging.getLevelName(v.upper())
+            self.syslog_log_level = v
+            #if (self.syslog_log_level == "Level %s" % v.upper()):
+            #    raise ValueError('Unexpected syslog_log_level: %s' % v)
         else:
-            self.syslog_log_level = logging.ERROR
-
+            #self.syslog_log_level = logging.ERROR
+            self.syslog_log_level = "ERROR"
+	    pass
         # use_syslog
         if config.has_option("DEFAULT", "use_syslog"):
             self.use_syslog = config.getboolean("DEFAULT", "use_syslog")
@@ -87,23 +92,18 @@ class RootwrapConfig(object):
 
 
 def setup_syslog(execname, facility, level):
-    rootwrap_logger = logging.getLogger()
-    rootwrap_logger.setLevel(level)
-    handler = logging.handlers.SysLogHandler(address='/dev/log',
-                                             facility=facility)
-    handler.setFormatter(logging.Formatter(
-                         os.path.basename(execname) + ': %(message)s'))
-    rootwrap_logger.addHandler(handler)
+    #rootwrap_logger = logging.getLogger()
+    #rootwrap_logger.setLevel(level)
+    #handler = logging.handlers.SysLogHandler(address='/dev/log',
+    #                                         facility=facility)
+    #handler.setFormatter(logging.Formatter(
+    #                     os.path.basename(execname) + ': %(message)s'))
+    #rootwrap_logger.addHandler(handler)
+    pass
 
-
-def build_filter(class_name, *args):
+def build_filter(class_name, arg_list):
     """Returns a filter object of class class_name."""
-    if not hasattr(filters, class_name):
-        logging.warning("Skipping unknown filter class (%s) specified "
-                        "in filter definitions" % class_name)
-        return None
-    filterclass = getattr(filters, class_name)
-    return filterclass(*args)
+    return filters.build_filter(class_name, arg_list)
 
 
 def load_filters(filters_path):
@@ -114,17 +114,21 @@ def load_filters(filters_path):
             continue
         for filterfile in filter(lambda f: not f.startswith('.'),
                                  os.listdir(filterdir)):
-            filterconfig = moves.configparser.RawConfigParser()
+            filterconfig = ConfigParser.RawConfigParser()
             filterconfig.read(os.path.join(filterdir, filterfile))
             for (name, value) in filterconfig.items("Filters"):
                 filterdefinition = [string.strip(s) for s in value.split(',')]
-                newfilter = build_filter(*filterdefinition)
+                newfilter = build_filter(filterdefinition[0],
+                                         filterdefinition[1:])
                 if newfilter is None:
                     continue
                 newfilter.name = name
                 filterlist.append(newfilter)
     return filterlist
 
+def non_chain_filter(fltr, f):
+    return (fltr.run_as == f.run_as
+            and not fltr.is_chaining_filter())
 
 def match_filter(filter_list, userargs, exec_dirs=[]):
     """Checks user command and arguments through command filters.
@@ -139,15 +143,12 @@ def match_filter(filter_list, userargs, exec_dirs=[]):
 
     for f in filter_list:
         if f.match(userargs):
-            if isinstance(f, filters.ChainingFilter):
+            if f.is_chaining_filter():
                 # This command calls exec verify that remaining args
                 # matches another filter.
-                def non_chain_filter(fltr):
-                    return (fltr.run_as == f.run_as
-                            and not isinstance(fltr, filters.ChainingFilter))
 
                 leaf_filters = [fltr for fltr in filter_list
-                                if non_chain_filter(fltr)]
+                                if non_chain_filter(fltr, f)]
                 args = f.exec_args(userargs)
                 if (not args or not match_filter(leaf_filters,
                                                  args, exec_dirs=exec_dirs)):

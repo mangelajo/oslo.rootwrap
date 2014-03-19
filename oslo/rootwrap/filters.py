@@ -20,11 +20,11 @@ import re
 class CommandFilter(object):
     """Command filter only checking that the 1st argument matches exec_path."""
 
-    def __init__(self, exec_path, run_as, *args):
+    def __init__(self, exec_path, run_as, args_list):
         self.name = ''
         self.exec_path = exec_path
         self.run_as = run_as
-        self.args = args
+        self.args = args_list
         self.real_exec = None
 
     def get_exec(self, exec_dirs=[]):
@@ -45,7 +45,8 @@ class CommandFilter(object):
 
     def match(self, userargs):
         """Only check that the first argument (command) matches exec_path."""
-        return userargs and os.path.basename(self.exec_path) == userargs[0]
+        return (len(userargs)!=0 and 
+                os.path.basename(self.exec_path) == userargs[0])
 
     def get_command(self, userargs, exec_dirs=[]):
         """Returns command to execute (with sudo -u if run_as != root)."""
@@ -59,6 +60,11 @@ class CommandFilter(object):
         """Returns specific environment to set, None if none."""
         return None
 
+    def is_chaining_filter(self):
+        return False
+    
+    def exec_args(self, userargs):
+        return ['']
 
 class RegExpFilter(CommandFilter):
     """Command filter doing regexp matching for every argument."""
@@ -145,8 +151,8 @@ class KillFilter(CommandFilter):
        executable, so it will only work on procfs-capable systems (not OSX).
     """
 
-    def __init__(self, *args):
-        super(KillFilter, self).__init__("/bin/kill", *args)
+    def __init__(self, run_as, args_list):
+        super(KillFilter, self).__init__("/bin/kill", run_as, args_list)
 
     def match(self, userargs):
         if not userargs or userargs[0] != "kill":
@@ -195,9 +201,9 @@ class KillFilter(CommandFilter):
 class ReadFileFilter(CommandFilter):
     """Specific filter for the utils.read_file_as_root call."""
 
-    def __init__(self, file_path, *args):
+    def __init__(self, file_path, args_list):
         self.file_path = file_path
-        super(ReadFileFilter, self).__init__("/bin/cat", "root", *args)
+        super(ReadFileFilter, self).__init__("/bin/cat", "root", args_list)
 
     def match(self, userargs):
         return (userargs == ['cat', self.file_path])
@@ -231,8 +237,8 @@ class EnvFilter(CommandFilter):
             envs.add(arg.partition('=')[0])
         return envs
 
-    def __init__(self, exec_path, run_as, *args):
-        super(EnvFilter, self).__init__(exec_path, run_as, *args)
+    def __init__(self, exec_path, run_as, args_list):
+        super(EnvFilter, self).__init__(exec_path, run_as, args_list)
 
         env_list = self._extract_env(self.args)
         # Set exec_path to X when args are in the form of
@@ -256,7 +262,7 @@ class EnvFilter(CommandFilter):
 
         # match first non-env argument with CommandFilter
         return (super(EnvFilter, self).match(user_command)
-                and len(filter_envs) and user_envs == filter_envs)
+                and len(filter_envs)!=0 and user_envs == filter_envs)
 
     def exec_args(self, userargs):
         args = userargs[:]
@@ -294,9 +300,9 @@ class EnvFilter(CommandFilter):
 
 
 class ChainingFilter(CommandFilter):
-    def exec_args(self, userargs):
-        return []
 
+    def is_chaining_filter(self):
+        return True
 
 class IpNetnsExecFilter(ChainingFilter):
     """Specific filter for the ip utility to that does match exec."""
@@ -314,3 +320,35 @@ class IpNetnsExecFilter(ChainingFilter):
         if args:
             args[0] = os.path.basename(args[0])
         return args
+
+
+def build_filter(class_name, arg_list):
+    exe_name = arg_list[0]
+    run_as = arg_list[1]
+    arguments = arg_list[2:] 
+    if class_name == "CommandFilter":
+        return CommandFilter(exe_name, run_as, arguments)
+    if class_name == "RegExpFilter":
+	return RegExpFilter(exe_name, run_as, arguments)
+    elif class_name == "PathFilter":
+        return PathFilter(exe_name, run_as, arguments)
+    elif class_name == "KillFilter":
+        return KillFilter(run_as, arguments)
+    elif class_name == "ReadFileFilter":
+        return ReadFileFilter(exe_name, arguments)
+    elif class_name == "IpFilter":
+        return IpFilter(exe_name, run_as, arguments)
+    elif class_name == "EnvFilter":
+        return EnvFilter(exe_name, run_as, arguments)
+    elif class_name == "ChainingFilter":
+        return ChainingFilter(exe_name, run_as, arguments)
+    elif class_name == "IpNetnsExecFilter":
+        return IpNetnsExecFilter(exe_name, run_as, arguments)
+    else: 
+        print("Skipping unknown filter class (%s) specified "
+              "in filter definitions" % class_name)
+        return None
+
+
+def _shedskin_arg_discovery_helpers():
+    build_filter(["ping","root","127.0.0.1","-t","2"]) 

@@ -32,15 +32,16 @@
 
 from __future__ import print_function
 
-import logging
+#import logging
 import os
-import pwd
+#import pwd
 import signal
-import subprocess
+#import subprocess
 import sys
+import wrapper
 
-from six import moves
-
+#from six import moves
+import ConfigParser 
 RC_UNAUTHORIZED = 99
 RC_NOCOMMAND = 98
 RC_BADCONFIG = 97
@@ -56,7 +57,8 @@ def _subprocess_setup():
 def _exit_error(execname, message, errorcode, log=True):
     print("%s: %s" % (execname, message), file=sys.stderr)
     if log:
-        logging.error(message)
+        #logging.error(message)
+	print(message)
     sys.exit(errorcode)
 
 
@@ -78,23 +80,24 @@ def main():
     configfile = sys.argv.pop(0)
     userargs = sys.argv[:]
 
+    # sys.path not supported in shedskin, but this is not needed in the compiled
+    # version
     # Add ../ to sys.path to allow running from branch
-    possible_topdir = os.path.normpath(os.path.join(os.path.abspath(execname),
-                                                    os.pardir, os.pardir))
-    if os.path.exists(os.path.join(possible_topdir, "oslo", "__init__.py")):
-        sys.path.insert(0, possible_topdir)
-
-    from oslo.rootwrap import wrapper
+    #possible_topdir = os.path.normpath(os.path.join(os.path.abspath(execname),
+    #                                                os.pardir, os.pardir))
+    #if os.path.exists(os.path.join(possible_topdir, "oslo", "__init__.py")):
+    #    #sys.path = [possible_topdir] + sys.path
+        
 
     # Load configuration
     try:
-        rawconfig = moves.configparser.RawConfigParser()
+        rawconfig = ConfigParser.RawConfigParser()
         rawconfig.read(configfile)
         config = wrapper.RootwrapConfig(rawconfig)
     except ValueError as exc:
         msg = "Incorrect value in %s: %s" % (configfile, exc.message)
         _exit_error(execname, msg, RC_BADCONFIG, log=False)
-    except moves.configparser.Error:
+    except ConfigParser.Error:
         _exit_error(execname, "Incorrect configuration file: %s" % configfile,
                     RC_BADCONFIG, log=False)
 
@@ -107,24 +110,26 @@ def main():
     filters = wrapper.load_filters(config.filters_path)
     try:
         filtermatch = wrapper.match_filter(filters, userargs,
-                                           exec_dirs=config.exec_dirs)
+                                           exec_dirs=config.exec_dirs) 
         if filtermatch:
             command = filtermatch.get_command(userargs,
                                               exec_dirs=config.exec_dirs)
             if config.use_syslog:
-                logging.info("(%s > %s) Executing %s (filter match = %s)" % (
-                    _getlogin(), pwd.getpwuid(os.getuid())[0],
-                    command, filtermatch.name))
+                #logging.info("(%s > %s) Executing %s (filter match = %s)" % (
+                #    _getlogin(), pwd.getpwuid(os.getuid())[0],
+                #    command, filtermatch.name))
+		print("logging.info omited")
 
-            obj = subprocess.Popen(command,
-                                   stdin=sys.stdin,
-                                   stdout=sys.stdout,
-                                   stderr=sys.stderr,
-                                   preexec_fn=_subprocess_setup,
-                                   env=filtermatch.get_environment(userargs))
-            obj.wait()
-            sys.exit(obj.returncode)
-
+            #obj = subprocess.Popen(command,
+            #                       stdin=sys.stdin,
+            #                       stdout=sys.stdout,
+            #                       stderr=sys.stderr,
+            #                       preexec_fn=_subprocess_setup,
+            #                       env=filtermatch.get_environment(userargs))
+            #obj.wait()
+            #sys.exit(obj.returncode)
+	    return_code = os.system(' '.join(command))
+            sys.exit(return_code)
     except wrapper.FilterMatchNotExecutable as exc:
         msg = ("Executable not found: %s (filter match = %s)"
                % (exc.match.exec_path, exc.match.name))
@@ -134,3 +139,6 @@ def main():
         msg = ("Unauthorized command: %s (no filter matched)"
                % ' '.join(userargs))
         _exit_error(execname, msg, RC_UNAUTHORIZED, log=config.use_syslog)
+
+if __name__ == "__main__":
+    main()
